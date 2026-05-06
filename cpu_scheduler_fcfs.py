@@ -179,7 +179,15 @@ class CPUSchedulerApp(tk.Tk):
         self._outer_canvas.pack(fill="both", expand=True)
 
         self._main_frame = tk.Frame(self._outer_canvas, bg=BG)
-        self._outer_canvas.create_window((0, 0), window=self._main_frame, anchor="nw")
+        self._canvas_window = self._outer_canvas.create_window(
+            (0, 0), window=self._main_frame, anchor="nw")
+
+        # Make _main_frame always match the canvas width (fills horizontally)
+        def _on_canvas_resize(event):
+            self._outer_canvas.itemconfig(
+                self._canvas_window, width=event.width)
+        self._outer_canvas.bind("<Configure>", _on_canvas_resize)
+
         self._main_frame.bind("<Configure>", lambda e:
             self._outer_canvas.configure(
                 scrollregion=self._outer_canvas.bbox("all")))
@@ -189,12 +197,15 @@ class CPUSchedulerApp(tk.Tk):
         # ── TOP ROW: Process Queue (left) | Memory Map (right) ──
         top_row = tk.Frame(self._main_frame, bg=BG)
         top_row.pack(fill="x", padx=24, pady=(20, 0))
+        # Give process queue 3x weight vs memory panel
+        top_row.columnconfigure(0, weight=3)
+        top_row.columnconfigure(1, weight=1)
 
         self._input_col = tk.Frame(top_row, bg=BG)
-        self._input_col.pack(side="left", fill="both", expand=True, padx=(0, 16))
+        self._input_col.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
 
         self._mem_col = tk.Frame(top_row, bg=BG)
-        self._mem_col.pack(side="left", fill="y", anchor="n")
+        self._mem_col.grid(row=0, column=1, sticky="nsew")
 
         # ── BOTTOM: Gantt + Stats (full width) ──
         self._bottom_col = tk.Frame(self._main_frame, bg=BG)
@@ -293,7 +304,7 @@ class CPUSchedulerApp(tk.Tk):
     def _build_memory_panel(self):
         card = tk.Frame(self._mem_col, bg=CARD,
             highlightbackground=BORDER, highlightthickness=1)
-        card.pack(fill="y")
+        card.pack(fill="both", expand=True)
 
         sec_hdr = tk.Frame(card, bg=CARD)
         sec_hdr.pack(fill="x", padx=18, pady=(16, 8))
@@ -303,10 +314,11 @@ class CPUSchedulerApp(tk.Tk):
             bg=CARD, fg=MUTED,
             font=("Consolas", 8, "bold")).pack(side="left")
 
+        # Canvas fills the card width responsively
         self._mem_canvas = tk.Canvas(card,
-            bg=SURFACE, width=210, height=MEM_H,
+            bg=SURFACE, height=MEM_H,
             highlightthickness=0)
-        self._mem_canvas.pack(padx=14, pady=(0, 10))
+        self._mem_canvas.pack(fill="x", padx=14, pady=(0, 10))
         self._mem_canvas.after(50, self._draw_mem_idle)
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(0, 10))
@@ -317,7 +329,8 @@ class CPUSchedulerApp(tk.Tk):
     def _draw_mem_idle(self):
         c = self._mem_canvas
         c.delete("all")
-        w = c.winfo_width() or 210
+        c.update_idletasks()
+        w = max(c.winfo_width(), 100)
         c.create_rectangle(0, 0, w, MEM_H, fill=SURFACE, outline="")
         c.create_text(w // 2, MEM_H // 2,
             text="Awaiting\nprocesses...",
@@ -340,7 +353,9 @@ class CPUSchedulerApp(tk.Tk):
 
         c = self._mem_canvas
         c.delete("all")
-        h, w = MEM_H, (c.winfo_width() or 210)
+        c.update_idletasks()
+        h = MEM_H
+        w = max(c.winfo_width(), 100)
 
         positions = []
         y = 0
@@ -350,13 +365,15 @@ class CPUSchedulerApp(tk.Tk):
             y += seg_h
 
         def draw_up_to(n):
+            c.update_idletasks()
+            cw = max(c.winfo_width(), 100)
             c.delete("all")
             for i, (seg, sy, sh) in enumerate(positions):
                 if i >= n:
                     break
-                c.create_rectangle(0, sy, w, sy + sh,
+                c.create_rectangle(0, sy, cw, sy + sh,
                     fill=seg["color"], outline="#0d1117", width=1)
-                c.create_text(w // 2, sy + sh // 2,
+                c.create_text(cw // 2, sy + sh // 2,
                     text=f"{seg['label']}\n{seg['mb']} MB",
                     fill="#ffffff", font=("Consolas", 8, "bold"),
                     justify="center")
@@ -452,17 +469,21 @@ class CPUSchedulerApp(tk.Tk):
 
         avg_row = tk.Frame(card, bg=CARD)
         avg_row.pack(fill="x", padx=18, pady=(0, 20))
+        avg_row.columnconfigure(0, weight=1)
+        avg_row.columnconfigure(1, weight=1)
+        avg_row.columnconfigure(2, weight=1)
 
         self._avg_labels = {}
-        for key, label, color in [
+        for i, (key, label, color) in enumerate([
             ("wt",  "Avg Waiting Time",    WARNING),
             ("tat", "Avg Turnaround Time", SUCCESS),
             ("ct",  "Avg Completion Time", ACCENT),
-        ]:
+        ]):
             box = tk.Frame(avg_row, bg=SURFACE,
                 highlightbackground=BORDER, highlightthickness=1,
                 padx=18, pady=14)
-            box.pack(side="left", expand=True, fill="x", padx=(0, 10))
+            box.grid(row=0, column=i, sticky="ew",
+                padx=(0, 10) if i < 2 else (0, 0))
             tk.Label(box, text=label.upper(),
                 bg=SURFACE, fg=MUTED,
                 font=("Consolas", 7, "bold")).pack(anchor="w")
@@ -619,7 +640,8 @@ class CPUSchedulerApp(tk.Tk):
         self._time_canvas.delete("all")
 
         self._gantt_canvas.update_idletasks()
-        bar_w = max(self._gantt_canvas.winfo_width(), 600)
+        # Always use actual canvas width — fully responsive
+        bar_w = max(self._gantt_canvas.winfo_width(), 100)
 
         end_time   = results[-1]["ct"]
         first_time = results[0]["start"] if results[0]["start"] > 0 else 0
